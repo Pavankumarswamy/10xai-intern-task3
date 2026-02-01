@@ -105,13 +105,18 @@ import gc
 # Lazy load embedder to save memory at startup
 embedder = None
 
+# Force cache directory for models
+os.environ['SENTENCE_TRANSFORMERS_HOME'] = './cache'
+
 def get_embedder():
     """Lazy load the embedding model only when needed"""
     global embedder
     if embedder is None:
-        print("🔄 Loading embedding model...")
-        embedder = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+        print("🔄 Loading embedding model (all-MiniLM-L6-v2)...")
+        sys.stdout.flush()
+        embedder = SentenceTransformer("all-MiniLM-L6-v2", device="cpu", cache_folder="./cache")
         print("✅ Embedding model loaded")
+        sys.stdout.flush()
     return embedder
 
 # ================= CONFIG =================
@@ -1220,5 +1225,5 @@ if __name__ == '__main__':
         print("="*50)
         sys.stdout.flush()
     
-    app.run(debug=True, host='0.0.0.0', port=7860)
+    app.run(debug=False, host='0.0.0.0', port=7860)
 
