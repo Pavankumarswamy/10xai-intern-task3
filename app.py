@@ -27,17 +27,31 @@ except:
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB limit for large PDFs
 executor = ThreadPoolExecutor(max_workers=4)
 
-# ================= CONFIG =================
-UPLOAD_FOLDER = 'uploads'
-VECTOR_DB_FOLDER = 'vector_db'
-PROCESSED_FOLDER = 'processed'
+# ================= CONFIG & PERSISTENCE =================
+import threading
+
+# Lock to prevent concurrent file operations on the vector DB and JSON files
+file_lock = threading.Lock()
+chart_lock = threading.Lock()
+
+# Detect Hugging Face Persistent Storage (/data is mounted in persistent spaces)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PERSISTENT_STORAGE = "/data"
+
+if os.path.exists(PERSISTENT_STORAGE):
+    UPLOAD_FOLDER = os.path.join(PERSISTENT_STORAGE, 'uploads')
+    VECTOR_DB_FOLDER = os.path.join(PERSISTENT_STORAGE, 'vector_db')
+    PROCESSED_FOLDER = os.path.join(PERSISTENT_STORAGE, 'processed')
+    print(f"🏠 [PERSISTENCE] Persistent storage detected at {PERSISTENT_STORAGE}")
+else:
+    UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+    VECTOR_DB_FOLDER = os.path.join(BASE_DIR, 'vector_db')
+    PROCESSED_FOLDER = os.path.join(BASE_DIR, 'processed')
+    print("🏠 [PERSISTENCE] Using local ephemeral storage")
 
 for folder in [UPLOAD_FOLDER, VECTOR_DB_FOLDER, PROCESSED_FOLDER]:
     if not os.path.exists(folder):
-        os.makedirs(folder)
-
-import threading
-chart_lock = threading.Lock()
+        os.makedirs(folder, exist_ok=True)
 
 # Global variables
 vector_index = None
@@ -182,33 +196,31 @@ def save_vector_db():
     if vector_index is None or not chunks:
         return
     
-    try:
-        # Save FAISS index
-        index_path = os.path.join(VECTOR_DB_FOLDER, "faiss_index.bin")
-        faiss.write_index(vector_index, index_path)
-        
-        # Save chunks metadata (compact format, no indent for speed)
-        chunks_path = os.path.join(VECTOR_DB_FOLDER, "chunks.json")
-        with open(chunks_path, 'w', encoding='utf-8') as f:
-            json.dump(chunks, f, separators=(',', ':'))
+    with file_lock:
+        try:
+            # Save FAISS index
+            index_path = os.path.join(VECTOR_DB_FOLDER, "faiss_index.bin")
+            faiss.write_index(vector_index, index_path)
             
-        # Generate vectors.json (compact format)
-        vectors_data = [{
-            "text": c['text'],
-            "metadata": c['meta'],
-            "embedding": c.get('embedding', [])
-        } for c in chunks]
-        
-        vectors_path = os.path.join(VECTOR_DB_FOLDER, "vectors.json")
-        with open(vectors_path, 'w', encoding='utf-8') as f:
-            json.dump(vectors_data, f, separators=(',', ':'))
-        
-        print(f"💾 Saved {len(chunks)} chunks to DB")
-        
-
-                    
-    except Exception as e:
-        print(f"❌ Save Error: {e}")
+            # Save chunks metadata (compact format, no indent for speed)
+            chunks_path = os.path.join(VECTOR_DB_FOLDER, "chunks.json")
+            with open(chunks_path, 'w', encoding='utf-8') as f:
+                json.dump(chunks, f, separators=(',', ':'))
+                
+            # Generate vectors.json (compact format)
+            vectors_data = [{
+                "text": c['text'],
+                "metadata": c['meta'],
+                "embedding": c.get('embedding', [])
+            } for c in chunks]
+            
+            vectors_path = os.path.join(VECTOR_DB_FOLDER, "vectors.json")
+            with open(vectors_path, 'w', encoding='utf-8') as f:
+                json.dump(vectors_data, f, separators=(',', ':'))
+            
+            print(f"💾 Saved {len(chunks)} chunks to {VECTOR_DB_FOLDER}")
+        except Exception as e:
+            print(f"❌ Save Error: {e}")
 
 
 def load_vector_db():
@@ -216,67 +228,74 @@ def load_vector_db():
     index_path = os.path.join(VECTOR_DB_FOLDER, "faiss_index.bin")
     chunks_path = os.path.join(VECTOR_DB_FOLDER, "chunks.json")
     
-    if os.path.exists(index_path) and os.path.exists(chunks_path):
-        try:
-            print("📂 Loading existing vector database...")
-            sys.stdout.flush()
-            
-            with open(chunks_path, 'r', encoding='utf-8') as f:
-                raw_chunks = json.load(f)
-            
-            # 1. Deduplicate by Text + Meta
-            seen = set()
-            unique_chunks = []
-            for c in raw_chunks:
-                key = (c['text'].strip(), c.get('meta'))
-                if key not in seen and len(c['text'].strip()) > 10:
-                    unique_chunks.append(c)
-                    seen.add(key)
-            
-            # 2. Check for missing embeddings and re-encode if necessary
-            missing_emb = [i for i, c in enumerate(unique_chunks) if 'embedding' not in c or not c['embedding']]
-            
-            if missing_emb or len(unique_chunks) < len(raw_chunks):
-                print(f"🧹 Reconciling DB: {len(raw_chunks)} -> {len(unique_chunks)} chunks.")
+    with file_lock:
+        if os.path.exists(index_path) and os.path.exists(chunks_path):
+            try:
+                print(f"📂 Loading existing vector database from {VECTOR_DB_FOLDER}...")
                 sys.stdout.flush()
                 
-                # Get embedder (lazy load)
-                model = get_embedder()
+                with open(chunks_path, 'r', encoding='utf-8') as f:
+                    raw_chunks = json.load(f)
                 
-                # Re-encode EVERYTHING to ensure consistency if any are missing
-                texts = [c['text'] for c in unique_chunks]
-                embeddings = model.encode(texts, show_progress_bar=False, batch_size=8).astype("float32")
+                # 1. Deduplicate by Text + Meta
+                seen = set()
+                unique_chunks = []
+                for c in raw_chunks:
+                    key = (c['text'].strip(), c.get('meta'))
+                    if key not in seen and len(c['text'].strip()) > 10:
+                        unique_chunks.append(c)
+                        seen.add(key)
                 
-                vector_index = faiss.IndexFlatL2(embeddings.shape[1])
-                vector_index.add(embeddings)
+                # 2. Check for missing embeddings and re-encode if necessary
+                missing_emb = [i for i, c in enumerate(unique_chunks) if 'embedding' not in c or not c['embedding']]
                 
-                # Update chunks with new embeddings
-                emb_list = embeddings.tolist()
-                for i, c in enumerate(unique_chunks):
-                    c['embedding'] = emb_list[i]
-                
-                chunks = unique_chunks
-                save_vector_db() # Sync cleaned version
-            else:
-                chunks = unique_chunks
-                vector_index = faiss.read_index(index_path)
+                if missing_emb or len(unique_chunks) < len(raw_chunks):
+                    print(f"🧹 Reconciling DB: {len(raw_chunks)} -> {len(unique_chunks)} chunks.")
+                    sys.stdout.flush()
+                    
+                    # Re-encode EVERYTHING to ensure consistency if any are missing
+                    texts = [c['text'] for c in unique_chunks]
+                    
+                    # Batch encode using Gemini
+                    all_emb = []
+                    for i in range(0, len(texts), 50):
+                        batch = texts[i:i+50]
+                        batch_emb = get_gemini_embeddings(batch)
+                        if batch_emb is not None:
+                            all_emb.append(batch_emb)
+                    
+                    if all_emb:
+                        embeddings = np.vstack(all_emb).astype("float32")
+                        vector_index = faiss.IndexFlatL2(embeddings.shape[1])
+                        vector_index.add(embeddings)
+                        
+                        # Update chunks with new embeddings
+                        emb_list = embeddings.tolist()
+                        for i, c in enumerate(unique_chunks):
+                            c['embedding'] = emb_list[i]
+                        
+                        chunks = unique_chunks
+                        # Background sync
+                        executor.submit(save_vector_db)
+                    else:
+                        print("❌ Failed to re-encode chunks")
+                else:
+                    chunks = unique_chunks
+                    vector_index = faiss.read_index(index_path)
 
-            print(f"✅ Loaded {len(chunks)} chunks from existing vector DB.")
+                print(f"✅ Loaded {len(chunks)} chunks from existing vector DB.")
+                sys.stdout.flush()
+                
+            except Exception as e:
+                print(f"❌ Error loading vector DB: {e}")
+                sys.stdout.flush()
+                vector_index = None
+                chunks = []
+        else:
+            print("ℹ️  No existing vector database found. Starting fresh.")
             sys.stdout.flush()
-            
-        except Exception as e:
-            print(f"❌ Error loading vector DB: {e}")
-            sys.stdout.flush()
-            import traceback
-            traceback.print_exc()
             vector_index = None
             chunks = []
-    else:
-        print("ℹ️  No existing vector database found. Starting fresh.")
-        print("   Upload documents to build the knowledge base.")
-        sys.stdout.flush()
-        vector_index = None
-        chunks = []
 
 
 
@@ -288,37 +307,38 @@ def save_processed_data(segments):
     unstructured = [s for s in segments if s.get('type') == 'narrative']
     
     # We append to existing files if they exist, or create new ones
-    struct_path = os.path.join(PROCESSED_FOLDER, "structured.json")
-    unstruct_path = os.path.join(PROCESSED_FOLDER, "unstructured.json")
-    
-    def append_to_json(path, new_data):
-        existing = []
-        if os.path.exists(path):
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    existing = json.load(f)
-            except: pass
+    with file_lock:
+        struct_path = os.path.join(PROCESSED_FOLDER, "structured.json")
+        unstruct_path = os.path.join(PROCESSED_FOLDER, "unstructured.json")
         
-        # Intelligent deduplication based on text and source
-        seen_keys = set((s['text'], s.get('source'), s.get('page')) for s in existing)
-        added_count = 0
-        
-        for s in new_data:
-            key = (s['text'], s.get('source'), s.get('page'))
-            if key not in seen_keys:
-                existing.append(s)
-                seen_keys.add(key)
-                added_count += 1
-        
-        if added_count > 0:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(existing, f, indent=4)
-            print(f"   -> Added {added_count} unique segments to {os.path.basename(path)}")
+        def append_to_json(path, new_data):
+            existing = []
+            if os.path.exists(path):
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        existing = json.load(f)
+                except: pass
+            
+            # Intelligent deduplication based on text and source
+            seen_keys = set((s['text'], s.get('source'), s.get('page')) for s in existing)
+            added_count = 0
+            
+            for s in new_data:
+                key = (s['text'], s.get('source'), s.get('page'))
+                if key not in seen_keys:
+                    existing.append(s)
+                    seen_keys.add(key)
+                    added_count += 1
+            
+            if added_count > 0:
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(existing, f, indent=4)
+                print(f"   -> Added {added_count} unique segments to {os.path.basename(path)}")
 
-    if structured: append_to_json(struct_path, structured)
-    if unstructured: append_to_json(unstruct_path, unstructured)
-    print(f"✅ Processed data saved to {PROCESSED_FOLDER}")
-    sys.stdout.flush()
+        if structured: append_to_json(struct_path, structured)
+        if unstructured: append_to_json(unstruct_path, unstructured)
+        print(f"✅ Processed data synced to disk at {PROCESSED_FOLDER}")
+        sys.stdout.flush()
 
 
 
@@ -652,75 +672,54 @@ def upload_file():
         return jsonify({"error": "No file"}), 400
     
     files = request.files.getlist('file')
-    if not files: 
+    if not files or files[0].filename == '': 
         return jsonify({"error": "No selection"}), 400
     
-    processed_count = 0
-    all_segments = []
-    
-    try:
-        print(f"📤 Processing {len(files)} file(s)...")
-        sys.stdout.flush()  # Force immediate output for HF Spaces
+    def generate():
+        processed_count = 0
+        all_segments = []
         
-        for idx, file in enumerate(files, 1):
-            if file.filename == '': 
-                continue
+        try:
+            yield f"data: {json.dumps({'status': 'processing', 'msg': f'📤 Received {len(files)} file(s)'})}\n\n"
             
-            filename = secure_filename(file.filename)
-            file_path = os.path.join(UPLOAD_FOLDER, filename)
+            for idx, file in enumerate(files, 1):
+                filename = secure_filename(file.filename)
+                file_path = os.path.join(UPLOAD_FOLDER, filename)
+                
+                yield f"data: {json.dumps({'status': 'saving', 'msg': f'Saving {filename}...'})}\n\n"
+                file.save(file_path)
+                
+                yield f"data: {json.dumps({'status': 'extracting', 'msg': f'Extracting content from {filename}...'})}\n\n"
+                try:
+                    segments = extract_content(file_path)
+                    if segments:
+                        all_segments.extend(segments)
+                        processed_count += 1
+                        yield f"data: {json.dumps({'status': 'extracted', 'msg': f'✓ Found {len(segments)} segments in {filename}'})}\n\n"
+                except Exception as e:
+                    yield f"data: {json.dumps({'status': 'error', 'msg': f'⚠️ Error extracting {filename}: {str(e)}'})}\n\n"
             
-            print(f"  [{idx}/{len(files)}] Saving {filename}...")
-            sys.stdout.flush()
-            file.save(file_path)
+            if all_segments:
+                yield f"data: {json.dumps({'status': 'indexing', 'msg': f'⚡ Vectorizing {len(all_segments)} segments via Gemini...' })}\n\n"
+                
+                # Split and vectorize logic but yielding progress
+                # Note: We call it directly but we can improve it to yield inside
+                try:
+                    split_and_vectorize(all_segments)
+                    save_processed_data(all_segments)
+                    yield f"data: {json.dumps({'status': 'complete', 'message': f'✅ Successfully indexed {processed_count} file(s)!', 'count': processed_count})}\n\n"
+                except Exception as e:
+                    yield f"data: {json.dumps({'status': 'error', 'msg': f'❌ Indexing failed: {str(e)}'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'status': 'error', 'msg': 'No content could be extracted from these files.'})}\n\n"
+            
+            yield "data: [DONE]\n\n"
+            
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
 
-            
-            # Extract content
-            print(f"  [{idx}/{len(files)}] Extracting {filename}...")
-            sys.stdout.flush()
-            
-            try:
-                segments = extract_content(file_path)
-                
-                if segments:
-                    all_segments.extend(segments)
-                    processed_count += 1
-                    print(f"  ✓ Extracted {len(segments)} segments from {filename}")
-                    sys.stdout.flush()
-            except Exception as e:
-                print(f"  ⚠️ Error extracting {filename}: {e}")
-                sys.stdout.flush()
-                continue
-        
-        # Batch vectorize all segments at once (much faster!)
-        if all_segments:
-            print(f"⚡ Batch indexing {len(all_segments)} segments...")
-            sys.stdout.flush()
-            
-            try:
-                split_and_vectorize(all_segments)
-                
-                # Save processed data
-                save_processed_data(all_segments)
-                
-                print(f"✅ Upload complete!")
-                sys.stdout.flush()
-                
-            except Exception as e:
-                print(f"❌ Indexing Error: {e}")
-                sys.stdout.flush()
-                return jsonify({"error": f"Indexing failed: {str(e)}"}), 500
-        
-        return jsonify({
-            "message": f"✅ Successfully indexed {processed_count} file(s)!",
-            "system_prompt": "Knowledge base updated." 
-        })
-        
-    except Exception as e:
-        print(f"❌ Upload Error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.stdout.flush()
-        return jsonify({"error": str(e)}), 500
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 @app.route('/files', methods=['GET'])
 def list_files():

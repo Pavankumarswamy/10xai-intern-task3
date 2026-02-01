@@ -280,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         isUploading = true;
         const fileCount = files.length;
-        showUploadStatus(`⚡ Processing ${fileCount} file${fileCount > 1 ? 's' : ''}...`);
+        showUploadStatus(`⚡ Starting upload of ${fileCount} file${fileCount > 1 ? 's' : ''}...`);
 
         const formData = new FormData();
         for (let i = 0; i < files.length; i++) {
@@ -289,52 +289,57 @@ document.addEventListener('DOMContentLoaded', () => {
 
         fileUpload.value = ''; // Reset
 
-        // Show initial message
-        addBotMessage(`📂 **Processing ${fileCount} document${fileCount > 1 ? 's' : ''}...**\nExtracting content and building vector database...`);
+        // Show initial message in chat
+        const uploadMsgId = 'upload-' + Date.now();
+        addBotMessage(`📂 **Processing ${fileCount} document${fileCount > 1 ? 's' : ''}...**\nPreparing to extract and index...`);
 
         try {
-            // Add timeout to prevent hanging
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => {
-                controller.abort();
-                console.error('Upload timeout');
-            }, 120000); // 2 minute timeout
-
             const response = await fetch('/upload', {
                 method: 'POST',
-                body: formData,
-                signal: controller.signal
+                body: formData
             });
 
-            clearTimeout(timeoutId);
+            if (!response.ok) throw new Error(`Server error: ${response.status}`);
 
-            if (!response.ok) {
-                throw new Error(`Server error: ${response.status}`);
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n');
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const dataStr = line.substring(6).trim();
+                        if (dataStr === '[DONE]') break;
+
+                        try {
+                            const data = JSON.parse(dataStr);
+
+                            if (data.status === 'error') {
+                                addBotMessage(`### ⚠️ Upload Issue\n${data.msg}`);
+                                hideUploadStatus();
+                            } else if (data.status === 'complete') {
+                                hideUploadStatus();
+                                currentActiveFile = "Uploaded Files";
+                                fetchFiles(); // Refresh list
+                                addBotMessage(`### ✅ Indexing Complete!\n${data.message}\n\nYou can now query across all uploaded documents.`);
+                            } else if (data.msg) {
+                                // Update status pill
+                                showUploadStatus(data.msg);
+                            }
+                        } catch (e) { console.error('Parse Error', e); }
+                    }
+                }
             }
 
-            const data = await response.json();
-
-            if (data.message) {
-                hideUploadStatus();
-                currentActiveFile = "Uploaded Files";
-                fetchFiles(); // Refresh list
-                addBotMessage(`### ✅ Indexing Complete!\n${data.message}\n\nYou can now query across all uploaded documents.`);
-            } else if (data.error) {
-                hideUploadStatus();
-                addBotMessage(`### ⚠️ Upload Issue\n${data.error}`);
-            } else {
-                hideUploadStatus();
-                addBotMessage('### ⚠️ Update\nThe knowledge base could not be updated with these files.');
-            }
         } catch (error) {
             console.error('Upload Error:', error);
             hideUploadStatus();
-
-            if (error.name === 'AbortError') {
-                addBotMessage('### ⏱️ Upload Timeout\nThe upload took too long. Please try uploading fewer or smaller files.');
-            } else {
-                addBotMessage(`### ⚠️ Upload Issue\nConnection error: ${error.message}\n\nPlease check your connection and try again.`);
-            }
+            addBotMessage(`### ⚠️ Upload Issue\nConnection error: ${error.message}\n\nPlease check your connection and try again.`);
         } finally {
             isUploading = false;
             setTimeout(hideUploadStatus, 2000);
