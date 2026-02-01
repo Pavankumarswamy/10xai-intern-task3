@@ -1,7 +1,6 @@
 FROM python:3.10-slim
 
 # Install system dependencies
-# libgl1-mesa-glx is obsolete in newer Debian, replaced by libgl1
 RUN apt-get update && apt-get install -y \
     libgomp1 \
     libgl1 \
@@ -13,7 +12,8 @@ RUN useradd -m -u 1000 user
 ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH \
     PYTHONUNBUFFERED=1 \
-    HF_HOME=/home/user/app/cache
+    HF_HOME=/home/user/app/cache \
+    SENTENCE_TRANSFORMERS_HOME=/home/user/app/cache
 
 WORKDIR $HOME/app
 
@@ -25,6 +25,9 @@ USER user
 # Install dependencies
 COPY --chown=user requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Pre-download the embedding model to avoid runtime downloads
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 # Copy everything
 COPY --chown=user . .
