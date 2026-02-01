@@ -1,0 +1,8 @@
+[
+    {
+        "text": "Ad Astra School \u2013 Sample Dataset for AI RAG\nAssignment\nStudent Records (Structured Data)\nStudent ID\nName\nClass\nSubject\nMarks\nAttendance %\nAA001\nRohan Mehta\n10A\nMathematics\n78\n92\nAA002\nAnanya Rao\n10A\nMathematics\n91\n95\nAA003\nKarthik Reddy\n10B\nScience\n65\n88\nAA004\nSneha Patel\n10B\nScience\n84\n90\nAA005\nArjun Singh\n9A\nEnglish\n73\n85\nAA006\nPooja Sharma\n9A\nEnglish\n89\n93\nAA007\nVikram Iyer\n8A\nSocial Studies\n68\n80\nAA008\nNeha Gupta\n8A\nSocial Studies\n94\n97\nAA009\nRahul Das\n7B\nMathematics\n56\n76\nAA010\nIshita Banerjee\n7B\nMathematics\n82\n89\nSchool Information (Unstructured Text)\nFee Structure:\n\u2022 Annual Tuition Fee: I60,000\n\u2022 Exam Fee (per term): I2,000\n\u2022 Transport Fee (optional): I15,000 per year\nExam Schedule:\n\u2022 Unit Test 1: July 15\n\u2022 Mid-Term Exams: September 10\u201315\n\u2022 Unit Test 2: December 5\n\u2022 Final Exams: March 1\u201310\nSchool Rules:\n\u2022 Attendance below 75% is not permitted for final exams.\n\u2022 Mobile phones are strictly prohibited on campus.\n\u2022 Students must wear the prescribed uniform at all times.\n\u2022 Respectful behavior towards staff and peers is mandatory.\nTimetable (Sample \u2013 Class 10):\n\u2022 9:00\u201310:00 \u2013 Mathematics\n\u2022 10:00\u201311:00 \u2013 Science\n\u2022 11:15\u201312:15 \u2013 English\n\u2022 12:15\u20131:00 \u2013 Lunch Break\n\u2022 1:00\u20132:00 \u2013 Social Studies\n\u2022 2:00\u20133:00 \u2013 Computer Science\n",
+        "source": "Ad_Astra_School_Dataset_1.pdf",
+        "page": 1,
+        "type": "narrative"
+    }
+]

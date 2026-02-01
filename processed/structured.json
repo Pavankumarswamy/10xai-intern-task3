@@ -1,0 +1,9 @@
+[
+    {
+        "text": "| Student ID   | Name            | Class   | Subject        |   Marks |   Attendance % |\n|:-------------|:----------------|:--------|:---------------|--------:|---------------:|\n| AA001        | Rohan Mehta     | 10A     | Mathematics    |      78 |             92 |\n| AA002        | Ananya Rao      | 10A     | Mathematics    |      91 |             95 |\n| AA003        | Karthik Reddy   | 10B     | Science        |      65 |             88 |\n| AA004        | Sneha Patel     | 10B     | Science        |      84 |             90 |\n| AA005        | Arjun Singh     | 9A      | English        |      73 |             85 |\n| AA006        | Pooja Sharma    | 9A      | English        |      89 |             93 |\n| AA007        | Vikram Iyer     | 8A      | Social Studies |      68 |             80 |\n| AA008        | Neha Gupta      | 8A      | Social Studies |      94 |             97 |\n| AA009        | Rahul Das       | 7B      | Mathematics    |      56 |             76 |\n| AA010        | Ishita Banerjee | 7B      | Mathematics    |      82 |             89 |",
+        "source": "Ad_Astra_School_Dataset_1.pdf",
+        "page": 1,
+        "title": "Table 1",
+        "type": "table"
+    }
+]

@@ -1,0 +1,13 @@
+flask
+faiss-cpu
+numpy
+pandas
+matplotlib
+seaborn
+requests
+google-generativeai
+sentence-transformers
+python-dotenv
+PyMuPDF
+tabulate
+werkzeug
