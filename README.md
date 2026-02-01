@@ -1,3 +1,13 @@
+---
+title: AI Tool
+emoji: 🚀
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Document Intelligence & RAG System
 
 This project is a sophisticated Retrieval-Augmented Generation (RAG) platform designed to ingest, analyze, and query complex unstructured and structured data sources. It transforms static documents (PDF, Excel, CSV) into a queryable knowledge base using advanced vectorization techniques and Large Language Models (LLMs).
