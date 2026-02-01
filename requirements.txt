@@ -6,7 +6,6 @@ matplotlib
 seaborn
 requests
 google-generativeai
-sentence-transformers
 python-dotenv
 PyMuPDF
 tabulate

@@ -11,11 +11,11 @@ import base64
 import json
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context, send_from_directory
 from werkzeug.utils import secure_filename
-from sentence_transformers import SentenceTransformer
 from concurrent.futures import ThreadPoolExecutor
 import requests
 import uuid
 import seaborn as sns
+import google.generativeai as genai
 
 
 
@@ -98,26 +98,41 @@ import logging
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 
-import torch
 import sys
 import gc
 
 # Lazy load embedder to save memory at startup
 embedder = None
 
-# Force cache directory for models
-os.environ['SENTENCE_TRANSFORMERS_HOME'] = './cache'
-
-def get_embedder():
-    """Lazy load the embedding model only when needed"""
-    global embedder
-    if embedder is None:
-        print("🔄 Loading embedding model (all-MiniLM-L6-v2)...")
+def get_gemini_embeddings(texts, is_query=False):
+    """
+    Uses Google Gemini API to generate embeddings.
+    Handles both single strings and lists of strings.
+    """
+    task_type = "retrieval_query" if is_query else "retrieval_document"
+    try:
+        # Gemini embedding model
+        model_name = "models/embedding-001"
+        
+        if isinstance(texts, str):
+            result = genai.embed_content(
+                model=model_name,
+                content=texts,
+                task_type=task_type
+            )
+            return np.array(result['embedding']).astype("float32")
+        else:
+            # Batch processing for lists
+            result = genai.embed_content(
+                model=model_name,
+                content=texts,
+                task_type=task_type
+            )
+            return np.array(result['embedding']).astype("float32")
+    except Exception as e:
+        print(f"❌ Gemini Embedding Error: {e}")
         sys.stdout.flush()
-        embedder = SentenceTransformer("all-MiniLM-L6-v2", device="cpu", cache_folder="./cache")
-        print("✅ Embedding model loaded")
-        sys.stdout.flush()
-    return embedder
+        return None
 
 # ================= CONFIG =================
 # ================= CONFIG =================
@@ -547,35 +562,27 @@ def split_and_vectorize(segments, batch_size=8):
         sys.stdout.flush()
         return
 
-    # Get embedder (lazy load)
-    model = get_embedder()
-    
-    # Batch encode with smaller batches for HF Spaces
+    # Batch encode using Gemini API (No local model needed!)
     texts = [c['text'] for c in unique_new_chunks]
     total = len(texts)
-    print(f"⚡ Encoding {total} chunks in batches of {batch_size}...")
+    print(f"⚡ Encoding {total} chunks via Gemini API...")
     sys.stdout.flush()
     
-    # Process in small batches to avoid memory issues on HF
+    # Process in batches of 50 (Gemini API limit is usually around 100 for batch embedding)
     all_embeddings = []
+    batch_size = 50 
     for i in range(0, total, batch_size):
         batch = texts[i:i+batch_size]
         try:
-            batch_emb = model.encode(
-                batch, 
-                show_progress_bar=False, 
-                batch_size=batch_size,
-                convert_to_numpy=True
-            )
-            all_embeddings.append(batch_emb)
+            batch_emb = get_gemini_embeddings(batch)
+            if batch_emb is not None:
+                all_embeddings.append(batch_emb)
             
             # Progress feedback
-            if (i + batch_size) % 32 == 0 or (i + batch_size) >= total:
-                print(f"  Processed {min(i + batch_size, total)}/{total} chunks")
-                sys.stdout.flush()
-                
+            print(f"  Processed {min(i + batch_size, total)}/{total} chunks")
+            sys.stdout.flush()
         except Exception as e:
-            print(f"⚠️ Encoding error at batch {i}: {e}")
+            print(f"⚠️ API Encoding error at batch {i}: {e}")
             sys.stdout.flush()
             continue
     
@@ -617,8 +624,11 @@ def retrieve_chunks(query, k=5):
     if vector_index is None or len(chunks) == 0:
         return []
     
-    model = get_embedder()
-    query_embedding = model.encode([query]).astype("float32")
+    query_embedding = get_gemini_embeddings(query, is_query=True)
+    if query_embedding is None: return []
+    
+    # Reshape for FAISS
+    query_embedding = query_embedding.reshape(1, -1)
     distances, indices = vector_index.search(query_embedding, k=k)
     
     retrieved_items = []
