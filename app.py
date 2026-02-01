@@ -41,7 +41,6 @@ chart_lock = threading.Lock()
 # Global variables
 vector_index = None
 chunks = []
-global_narrative_context = ""
 current_system_prompt = "You are an AI assistant. Answer based on the provided context."
 chat_histories = {}  # session_id -> list of messages
 
@@ -243,7 +242,6 @@ def load_vector_db():
 
             print(f"✅ Loaded {len(chunks)} chunks from existing vector DB.")
             sys.stdout.flush()
-            cleanup_processed_data()
             
         except Exception as e:
             print(f"❌ Error loading vector DB: {e}")
@@ -259,37 +257,7 @@ def load_vector_db():
         vector_index = None
         chunks = []
 
-def cleanup_processed_data():
-    """Scans and removes duplicates from existing JSON files in processed folder."""
-    # Get current files in uploads to remove orphans
-    available_files = set(os.listdir(UPLOAD_FOLDER))
-    
-    for filename in ["structured.json", "unstructured.json"]:
-        path = os.path.join(PROCESSED_FOLDER, filename)
-        if os.path.exists(path):
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                seen = set()
-                unique = []
-                for s in data:
-                    src = s.get('source')
-                    # 1. Deduplicate
-                    key = (s['text'].strip(), src, s.get('page'))
-                    # 2. Check if file still exists
-                    is_orphan = src and src not in available_files
-                    
-                    if key not in seen and not is_orphan:
-                        unique.append(s)
-                        seen.add(key)
-                
-                if len(unique) < len(data):
-                    print(f"🧹 Cleaned processed file: {filename} ({len(data)} -> {len(unique)})")
-                    with open(path, 'w', encoding='utf-8') as f:
-                        json.dump(unique, f, indent=4)
-            except Exception as e:
-                print(f"Error cleaning {filename}: {e}")
+
 
 def save_processed_data(segments):
     """
@@ -411,23 +379,7 @@ def extract_content(file_path):
         
     return segments
 
-def precise_json_repair(json_str):
-    """
-    Attempts to fix common malformed JSON from LLMs.
-    """
-    import re
-    try:
-        # Extract list if embedded in text
-        match = re.search(r'\[.*\]', json_str, re.DOTALL)
-        if match: json_str = match.group(0)
-        return json.loads(json_str)
-    except:
-        try:
-            # Simple fallback: split by newlines if it looks like a list
-            lines = [l.strip().strip('"').strip(',').strip() for l in json_str.split('\n') if len(l) > 10]
-            return lines
-        except:
-            return []
+
 
 # ================= INTELLIGENCE: Gemini Implementation =================
 
@@ -471,17 +423,7 @@ def fast_paragraph_splitter(text, max_chars=1200):
     # Filter out very small chunks
     return [c for c in chunks if len(c) > 20]
 
-def generate_dynamic_system_prompt(text_sample):
-    prompt = f"""
-    Create a 2-sentence SYSTEM PROMPT for an AI assistant based on this text:
-    {text_sample[:2000]}
-    """
-    try:
-        model = genai.GenerativeModel(CURRENT_MODEL)
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except:
-        return "You are a helpful AI assistant."
+
 
 def generate_chart(context, query):
     schema = """{"type": "bar|line|pie|scatter", "title": "...", "categories": ["Label 1", "Label 2"], "values": [10, 20]}"""
@@ -679,12 +621,7 @@ def retrieve_chunks(query, k=5):
             retrieved_items.append(chunks[idx])
     return retrieved_items
 
-def update_system_prompt(text_sample):
-    global current_system_prompt
-    new_prompt = generate_dynamic_system_prompt(text_sample)
-    if new_prompt:
-        current_system_prompt = new_prompt
-        print(f"System prompt updated: {current_system_prompt}")
+
 
 
 # ================= ROUTES =================
@@ -695,8 +632,6 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    global global_table_context, global_narrative_context
-    
     if 'file' not in request.files: 
         return jsonify({"error": "No file"}), 400
     
@@ -750,10 +685,6 @@ def upload_file():
                 
                 # Save processed data
                 save_processed_data(all_segments)
-                
-                # Update system prompt in background
-                sample_text = all_segments[0]['text'][:1000] if all_segments else ""
-                executor.submit(update_system_prompt, sample_text)
                 
                 print(f"✅ Upload complete!")
                 sys.stdout.flush()
