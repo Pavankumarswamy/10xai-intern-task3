@@ -24,7 +24,8 @@ try:
     sns.set_theme(style="whitegrid")
 except:
     pass
-executor = ThreadPoolExecutor(max_workers=4)  # Increased for faster parallel processing
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB limit for large PDFs
+executor = ThreadPoolExecutor(max_workers=4)
 
 # ================= CONFIG =================
 UPLOAD_FOLDER = 'uploads'
@@ -747,7 +748,6 @@ def delete_file():
     file_path = os.path.join(UPLOAD_FOLDER, filename)
     if os.path.exists(file_path):
         os.remove(file_path)
-        delete_from_hf(file_path)
 
     
     # Remove from vector DB

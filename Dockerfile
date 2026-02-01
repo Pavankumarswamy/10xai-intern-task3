@@ -1,16 +1,29 @@
 FROM python:3.10-slim
 
+# Install system dependencies for FAISS and PyMuPDF
+RUN apt-get update && apt-get install -y \
+    libgomp1 \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set up user and environment
 RUN useradd -m -u 1000 user
-USER user
 ENV HOME=/home/user \
-    PATH=/home/user/.local/bin:$PATH
+    PATH=/home/user/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/home/user/app/cache
 
 WORKDIR $HOME/app
 
+# Pre-create necessary directories with correct permissions
+RUN mkdir -p uploads vector_db processed cache && chown -R user:user $HOME/app
+
+USER user
+
 # Install dependencies
 COPY --chown=user requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Copy everything
 COPY --chown=user . .
